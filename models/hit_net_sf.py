@@ -184,6 +184,14 @@ def hyp_up(hyp, scale=1, tile_scale=1):
         hyp = torch.cat((d, p), dim=1)
     return hyp
 
+def abs(input_tensor):
+    return torch.sqrt(torch.square(input_tensor))
+
+def custom_norm(cost_volume, p=1, dim=1):
+    return torch.sum(abs(cost_volume), dim=dim)
+
+def floor(x):
+    return torch.where(x > 0, x.int(),  x.int() - 1)
 
 def warp_and_aggregate(hyp, left, right):
     scale = left.size(3) // hyp.size(3)
@@ -194,10 +202,10 @@ def warp_and_aggregate(hyp, left, right):
     d_range = d_range.view(1, 1, 1, -1) - d_expand
     d_range = d_range.repeat(1, right.size(1), 1, 1)
 
-    cost = [torch.sum(torch.abs(left), dim=1, keepdim=True)]
+    cost = [torch.sum(abs(left), dim=1, keepdim=True)]
     for offset in [1, 0, -1]:
         index_float = d_range + offset
-        index_long = torch.floor(index_float).long()
+        index_long = floor(index_float).long()
         index_left = torch.clip(index_long, min=0, max=right.size(3) - 1)
         index_right = torch.clip(index_long + 1, min=0, max=right.size(3) - 1)
         index_weight = index_float - index_left
@@ -213,7 +221,7 @@ def warp_and_aggregate(hyp, left, right):
     n, c, h, w = cost.size()
     cost = cost.reshape(n, c, h // scale, scale, w // scale, scale)
     cost = cost.permute(0, 3, 5, 1, 2, 4)
-    cost = cost.reshape(n, scale * scale * c, h // scale, w // scale)
+    cost = cost.reshape(n, torch.pow(scale, 2) * c, h // scale, w // scale)
     return cost
 
 
@@ -297,7 +305,7 @@ class InitDispNet(nn.Module):
             max_disp,
         )
 
-        cost_volume = torch.norm(cost_volume, p=1, dim=1)
+        cost_volume = custom_norm(cost_volume, p=1, dim=1)
         cost_f, d_init = torch.min(cost_volume, dim=1, keepdim=True)
         d_init = d_init.float()
 
