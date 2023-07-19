@@ -199,7 +199,9 @@ def warp_and_aggregate(hyp, left, right):
 
     d_expand = disp_up(hyp[:, :1], hyp[:, 1:2], hyp[:, 2:3], scale, tile_expand=True)
     d_range = torch.arange(right.size(3), device=right.device)
-    d_range = d_range.view(1, 1, 1, -1) - d_expand
+    d_range = d_range.unsqueeze(0).unsqueeze(0).unsqueeze(0)
+    d_range = d_range.repeat(1, 1, d_expand.size(2), 1)
+    d_range = d_range - d_expand
     d_range = d_range.repeat(1, right.size(1), 1, 1)
 
     cost = [torch.sum(abs(left), dim=1, keepdim=True)]
@@ -210,12 +212,19 @@ def warp_and_aggregate(hyp, left, right):
         index_right = torch.clip(index_long + 1, min=0, max=right.size(3) - 1)
         index_weight = index_float - index_left
 
-        right_warp_left = torch.gather(right, dim=-1, index=index_left.long())
-        right_warp_right = torch.gather(right, dim=-1, index=index_right.long())
+        # right_warp_left = torch.gather(right, dim=-1, index=index_left.long())
+        # right_warp_right = torch.gather(right, dim=-1, index=index_right.long())
+        index_last = torch.arange(right.shape[-2])[:, None]  # index_last:400,1
+        right_warp_left = right[:, :, index_last, index_left.squeeze(0)]  # (1,16,16，400,640)
+        right_warp_left = right_warp_left[:, :, 0, :, :]
+    #
+        right_warp_right = right[:, :, index_last, index_right.squeeze(0)]  # (1,16,16，400,640)
+        right_warp_right = right_warp_right[:, :, 0, :, :]
+
         right_warp = right_warp_left + index_weight * (
                 right_warp_right - right_warp_left
         )
-        cost.append(torch.sum(torch.abs(left - right_warp), dim=1, keepdim=True))
+        cost.append(torch.sum(abs(left - right_warp), dim=1, keepdim=True))
     cost = torch.cat(cost, dim=1)
 
     n, c, h, w = cost.size()
@@ -305,7 +314,12 @@ class InitDispNet(nn.Module):
             max_disp,
         )
 
-        cost_volume = custom_norm(cost_volume, p=1, dim=1)
+        # cost_volume = custom_norm(cost_volume, p=1, dim=1)
+        norm = torch.zeros(cost_volume.size()[0], cost_volume.size()[2],
+                           cost_volume.size()[3], cost_volume.size()[4])
+        for i in range(cost_volume.size(1)):
+            norm += abs(cost_volume[:, i, :, :, :])
+        cost_volume = norm
         cost_f, d_init = torch.min(cost_volume, dim=1, keepdim=True)
         d_init = d_init.float()
 
